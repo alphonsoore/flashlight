@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flashlight Revealer</title>
+<style>
+  html,body{height:100%;margin:0;overflow:hidden;font-family:"UDDigiKyoWriting",system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#222;color:#fff}
+  .wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  .stage{height:min(92vh,92vw);width:min(92vh,92vw);position:relative;background:#fff;border-radius:8px;overflow:hidden;touch-action:none}
+  .content{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+  .letter{display:inline-block;line-height:1;font-weight:700;text-align:center;user-select:none;color:#000;transform:translateY(1%)}
+  canvas.overlay{position:absolute;inset:0;display:block}
+  .slider-box{position:fixed;left:16px;top:50%;transform:translateY(-50%);height:80vh;display:flex;flex-direction:column;align-items:center;justify-content:space-between;gap:8px}
+  .slider-box .big{font-size:44px;line-height:1}
+  .slider-box .small{font-size:18px;line-height:1}
+  .slider-box input{writing-mode:vertical-lr;direction:rtl;flex:1;width:28px;margin:0}
+  .btn{position:fixed;font-size:34px;line-height:1;padding:10px 14px;border-radius:10px;border:1px solid #444;background:#333;color:#fff;cursor:pointer}
+  #reveal{right:16px;bottom:16px}
+  #challenge{right:16px;top:16px}
+  #challenge.on{background:#a0f;border-color:#fff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage" id="stage">
+    <div class="content" id="content"><div class="letter" id="letter"></div></div>
+    <canvas class="overlay" id="overlay"></canvas>
+  </div>
+</div>
+
+<div class="slider-box">
+  <span class="big">&#x1F526;</span>
+  <input id="size" type="range" min="10" max="100" value="30">
+  <span class="small">&#x1F526;</span>
+</div>
+
+<button class="btn" id="challenge">&#x1F4FA;</button>
+<button class="btn" id="reveal">&#x1F4A1;</button>
+
+<script>
+const stage=document.getElementById('stage'),overlay=document.getElementById('overlay'),
+ctx=overlay.getContext('2d'),content=document.getElementById('content'),
+letterEl=document.getElementById('letter'),sizeInput=document.getElementById('size'),
+revealBtn=document.getElementById('reveal'),challengeBtn=document.getElementById('challenge');
+
+let down=false,revealed=false,challenge=false;
+const POOL='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+
+function resizeCanvas(){
+  const r=stage.getBoundingClientRect();
+  overlay.width=r.width;overlay.height=r.height;
+  fillShade();
+}
+function fillShade(){
+  ctx.globalCompositeOperation='source-over';
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  if(revealed)return;
+  ctx.fillStyle='#000';
+  ctx.fillRect(0,0,overlay.width,overlay.height);
+}
+function pos(e){
+  const r=overlay.getBoundingClientRect();
+  return{x:e.clientX-r.left,y:e.clientY-r.top};
+}
+function light(e){
+  if(revealed)return;
+  fillShade();
+  const{x,y}=pos(e);
+  ctx.beginPath();
+  ctx.arc(x,y,Number(sizeInput.value),0,Math.PI*2);
+  ctx.globalCompositeOperation='destination-out';
+  ctx.fill();
+  ctx.globalCompositeOperation='source-over';
+}
+overlay.addEventListener('pointerdown',e=>{down=true;overlay.setPointerCapture(e.pointerId);light(e)});
+overlay.addEventListener('pointermove',e=>{if(down)light(e)});
+const up=()=>{down=false;fillShade()};
+overlay.addEventListener('pointerup',up);
+overlay.addEventListener('pointercancel',up);
+
+function fitLetter(){
+  const r=content.getBoundingClientRect();
+  letterEl.style.fontSize=Math.min(r.width,r.height)*0.85+'px';
+}
+const rc=()=>'#'+Math.floor(Math.random()*16777215).toString(16).padStart(6,'0');
+const ri=(a,b)=>Math.floor(a+Math.random()*(b-a+1));
+
+function makePair(){
+  const H=ri(0,359),S=ri(50,85),L=ri(35,65),t=ri(0,4),a=ri(0,359),w=ri(4,16),cx=ri(0,100),cy=ri(0,100);
+  const mk=(dh,dl)=>()=>`hsl(${(H+dh+ri(-16,16)+360)%360},${S}%,${Math.max(12,Math.min(88,L+dl+ri(-10,10)))}%)`;
+  const build=c=>{
+    switch(t){
+      case 0:{const s=[];for(let i=0;i<40;i++)s.push(`${c()} ${i*2.5}%`);return`repeating-linear-gradient(${a}deg,${s.join(',')})`}
+      case 1:return`repeating-conic-gradient(from ${a}deg at ${cx}% ${cy}%,${c()} 0 ${w/2}deg,${c()} ${w/2}deg ${w}deg,${c()} ${w}deg ${w*1.5}deg)`;
+      case 2:return`repeating-radial-gradient(circle at ${cx}% ${cy}%,${c()} 0 ${w}px,${c()} ${w}px ${w*2}px,${c()} ${w*2}px ${w*3}px)`;
+      case 3:return`repeating-linear-gradient(${a}deg,${c()} 0 ${w}px,${c()} ${w}px ${w*2}px),repeating-linear-gradient(${a+90}deg,${c()}99 0 ${w}px,transparent ${w}px ${w*2}px)`;
+      default:return`repeating-linear-gradient(${a}deg,${c()} 0 ${w}px,${c()} ${w}px ${w*2}px),repeating-radial-gradient(circle at ${cx}% ${cy}%,${c()}aa 0 ${w}px,${c()}aa ${w}px ${w*2}px)`;
+    }
+  };
+  return[build(mk(0,0)),build(mk(ri(10,20)*(Math.random()<.5?-1:1),ri(6,12)*(Math.random()<.5?-1:1)))];
+}
+function applyStyle(){
+  if(challenge){
+    const[bg,fg]=makePair();
+    stage.style.background=bg;
+    letterEl.style.background=fg;
+    letterEl.style.webkitBackgroundClip='text';
+    letterEl.style.backgroundClip='text';
+    letterEl.style.webkitTextFillColor='transparent';
+    letterEl.style.color='transparent';
+  } else {
+    stage.style.background='#fff';
+    letterEl.style.background='none';
+    letterEl.style.webkitBackgroundClip='border-box';
+    letterEl.style.backgroundClip='border-box';
+    letterEl.style.webkitTextFillColor='#000';
+    letterEl.style.color='#000';
+  }
+}
+function newRound(){
+  revealed=false;
+  revealBtn.innerHTML='&#x1F4A1;';
+  letterEl.textContent=POOL[Math.floor(Math.random()*POOL.length)];
+  applyStyle();
+  fitLetter();
+  fillShade();
+}
+revealBtn.addEventListener('click',()=>{
+  if(!revealed){
+    revealed=true;
+    fillShade();
+    revealBtn.innerHTML='&#x1F520;';
+    const u=new SpeechSynthesisUtterance(letterEl.textContent);
+    speechSynthesis.cancel();speechSynthesis.speak(u);
+  } else newRound();
+});
+challengeBtn.addEventListener('click',()=>{
+  challenge=!challenge;
+  challengeBtn.classList.toggle('on',challenge);
+  applyStyle();
+});
+window.addEventListener('resize',()=>{resizeCanvas();fitLetter()});
+resizeCanvas();newRound();
+</script>
+</body>
+</html>
