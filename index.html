@@ -9,7 +9,16 @@
   .wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
   .stage{height:min(92vh,92vw);width:min(92vh,92vw);position:relative;background:#fff;border-radius:8px;overflow:hidden;touch-action:none}
   .content{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-  .letter{display:inline-block;line-height:1;font-weight:700;text-align:center;user-select:none;color:#000;transform:translateY(1%)}
+  .letter{display:inline-block;line-height:1;font-weight:700;text-align:center;user-select:none;color:#000;padding:.25em .15em;will-change:transform}
+  .decoys{position:absolute;inset:0;pointer-events:none;background:#000;display:none;will-change:transform;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%}
+  .letter{position:relative}
+  .decoys{transition:opacity .35s}
+  .ghost{position:absolute;visibility:hidden;pointer-events:none;background:none}
+  .stage.revealed .ghost{visibility:visible}
+  #ol1{color:#000;-webkit-text-stroke:.07em #000}
+  #ol2{color:#fff;-webkit-text-stroke:.035em #fff}
+  #glow{color:rgba(255,255,255,.22)}
+  .stage.revealed .decoys{opacity:.3}
   canvas.overlay{position:absolute;inset:0;display:block}
   .slider-box{position:fixed;left:16px;top:50%;transform:translateY(-50%);height:80vh;display:flex;flex-direction:column;align-items:center;justify-content:space-between;gap:8px}
   .slider-box .big{font-size:44px;line-height:1}
@@ -18,13 +27,15 @@
   .btn{position:fixed;font-size:34px;line-height:1;padding:10px 14px;border-radius:10px;border:1px solid #444;background:#333;color:#fff;cursor:pointer}
   #reveal{right:16px;bottom:16px}
   #challenge{right:16px;top:16px}
-  #challenge.on{background:#a0f;border-color:#fff}
+  #dizzy{right:16px;top:88px}
+  .btn.on{background:#a0f;border-color:#fff}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="stage" id="stage">
-    <div class="content" id="content"><div class="letter" id="letter"></div></div>
+    <div class="content" id="content"><div class="letter ghost" id="ol1"></div><div class="letter ghost" id="ol2"></div><div class="letter" id="letter"></div><div class="letter ghost" id="glow"></div></div>
+    <div class="decoys" id="decoys"></div>
     <canvas class="overlay" id="overlay"></canvas>
   </div>
 </div>
@@ -36,17 +47,36 @@
 </div>
 
 <button class="btn" id="challenge">&#x1F4FA;</button>
+<button class="btn" id="dizzy">&#x1F635;&#x200D;&#x1F4AB;</button>
 <button class="btn" id="reveal">&#x1F4A1;</button>
 
 <script>
 const stage=document.getElementById('stage'),overlay=document.getElementById('overlay'),
 ctx=overlay.getContext('2d'),content=document.getElementById('content'),
-letterEl=document.getElementById('letter'),sizeInput=document.getElementById('size'),
-revealBtn=document.getElementById('reveal'),challengeBtn=document.getElementById('challenge');
+letterEl=document.getElementById('letter'),decoysEl=document.getElementById('decoys'),
+letters=['ol1','ol2','glow'].map(i=>document.getElementById(i)),
+sizeInput=document.getElementById('size'),revealBtn=document.getElementById('reveal'),
+challengeBtn=document.getElementById('challenge'),dizzyBtn=document.getElementById('dizzy');
 
-let down=false,revealed=false,challenge=false;
 const POOL='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+let down=false,revealed=false;
+let tv=false,spin=false;  // independent toggles
+let round=0;           // letters played
+let decoyShapes=[];
+let fgStyle='#000';
+let ph=[0,0,0,0],rotAngle=0,curRot=0,t0=performance.now(),lastT=performance.now();
 
+const rc=()=>0;
+const ri=(a,b)=>Math.floor(a+Math.random()*(b-a+1));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const sign=()=>Math.random()<.5?-1:1;
+// difficulty 0..1, reaches 1 at round 25
+const diff=()=>Math.min(1,Math.max(0,(round-1)/24));
+// drift starts at round 4, grows until round 25
+const DRIFT_START=4;
+const driftLevel=()=>round<DRIFT_START?0:Math.min(1,(round-DRIFT_START)/21);
+
+/* ---------- flashlight ---------- */
 function resizeCanvas(){
   const r=stage.getBoundingClientRect();
   overlay.width=r.width;overlay.height=r.height;
@@ -67,9 +97,15 @@ function light(e){
   if(revealed)return;
   fillShade();
   const{x,y}=pos(e);
-  ctx.beginPath();
-  ctx.arc(x,y,Number(sizeInput.value),0,Math.PI*2);
+  const r=Number(sizeInput.value);
+  const g=ctx.createRadialGradient(x,y,r*0.3,x,y,r*1.25);
+  g.addColorStop(0,'rgba(0,0,0,1)');
+  g.addColorStop(0.55,'rgba(0,0,0,0.6)');
+  g.addColorStop(1,'rgba(0,0,0,0)');
   ctx.globalCompositeOperation='destination-out';
+  ctx.fillStyle=g;
+  ctx.beginPath();
+  ctx.arc(x,y,r*1.25,0,Math.PI*2);
   ctx.fill();
   ctx.globalCompositeOperation='source-over';
 }
@@ -81,34 +117,40 @@ overlay.addEventListener('pointercancel',up);
 
 function fitLetter(){
   const r=content.getBoundingClientRect();
-  letterEl.style.fontSize=Math.min(r.width,r.height)*0.85+'px';
+  const fs=Math.min(r.width,r.height)*0.85+'px';
+  letterEl.style.fontSize=fs;letters.forEach(l=>l.style.fontSize=fs);
 }
-const rc=()=>'#'+Math.floor(Math.random()*16777215).toString(16).padStart(6,'0');
-const ri=(a,b)=>Math.floor(a+Math.random()*(b-a+1));
 
-function makePair(){
+/* ---------- camouflage ---------- */
+function makePair(d){
   const H=ri(0,359),S=ri(50,85),L=ri(35,65),t=ri(0,4),a=ri(0,359),w=ri(4,16),cx=ri(0,100),cy=ri(0,100);
-  const mk=(dh,dl)=>()=>`hsl(${(H+dh+ri(-16,16)+360)%360},${S}%,${Math.max(12,Math.min(88,L+dl+ri(-10,10)))}%)`;
+  const jH=lerp(16,10,d),jL=lerp(10,6,d);
+  const mk=(dh,dl)=>(al=1)=>`hsla(${(H+dh+ri(-jH,jH)+360)%360},${S}%,${Math.max(12,Math.min(88,L+dl+ri(-jL,jL)))}%,${al})`;
   const build=c=>{
     switch(t){
       case 0:{const s=[];for(let i=0;i<40;i++)s.push(`${c()} ${i*2.5}%`);return`repeating-linear-gradient(${a}deg,${s.join(',')})`}
       case 1:return`repeating-conic-gradient(from ${a}deg at ${cx}% ${cy}%,${c()} 0 ${w/2}deg,${c()} ${w/2}deg ${w}deg,${c()} ${w}deg ${w*1.5}deg)`;
       case 2:return`repeating-radial-gradient(circle at ${cx}% ${cy}%,${c()} 0 ${w}px,${c()} ${w}px ${w*2}px,${c()} ${w*2}px ${w*3}px)`;
-      case 3:return`repeating-linear-gradient(${a}deg,${c()} 0 ${w}px,${c()} ${w}px ${w*2}px),repeating-linear-gradient(${a+90}deg,${c()}99 0 ${w}px,transparent ${w}px ${w*2}px)`;
-      default:return`repeating-linear-gradient(${a}deg,${c()} 0 ${w}px,${c()} ${w}px ${w*2}px),repeating-radial-gradient(circle at ${cx}% ${cy}%,${c()}aa 0 ${w}px,${c()}aa ${w}px ${w*2}px)`;
+      case 3:return`repeating-linear-gradient(${a}deg,${c()} 0 ${w}px,${c()} ${w}px ${w*2}px),repeating-linear-gradient(${a+90}deg,${c(.6)} 0 ${w}px,transparent ${w}px ${w*2}px)`;
+      default:return`repeating-linear-gradient(${a}deg,${c()} 0 ${w}px,${c()} ${w}px ${w*2}px),repeating-radial-gradient(circle at ${cx}% ${cy}%,${c(.67)} 0 ${w}px,${c(.67)} ${w}px ${w*2}px)`;
     }
   };
-  return[build(mk(0,0)),build(mk(ri(10,20)*(Math.random()<.5?-1:1),ri(6,12)*(Math.random()<.5?-1:1)))];
+  // tightness: hue/lightness offset shrinks as rounds increase
+  const dh=lerp(20,3,d),dl=lerp(12,2,d);
+  return[build(mk(0,0)),build(mk(dh*sign(),dl*sign()))];
 }
+
 function applyStyle(){
-  if(challenge){
-    const[bg,fg]=makePair();
+  if(tv){
+    let bg,fg,n=0;
+    do{[bg,fg]=makePair(diff());n++}while(n<20&&!(CSS.supports('background',bg)&&CSS.supports('background',fg)));
     stage.style.background=bg;
     letterEl.style.background=fg;
     letterEl.style.webkitBackgroundClip='text';
     letterEl.style.backgroundClip='text';
     letterEl.style.webkitTextFillColor='transparent';
     letterEl.style.color='transparent';
+    fgStyle=fg;
   } else {
     stage.style.background='#fff';
     letterEl.style.background='none';
@@ -116,32 +158,102 @@ function applyStyle(){
     letterEl.style.backgroundClip='border-box';
     letterEl.style.webkitTextFillColor='#000';
     letterEl.style.color='#000';
+    fgStyle='#000';
+  }
+  decoysEl.style.background=fgStyle;
+  drawDecoys();
+}
+
+/* ---------- decoys ---------- */
+function genDecoys(){
+  const n=tv?Math.floor(diff()*16):0;
+  decoyShapes=[];
+  for(let i=0;i<n;i++){
+    const type=['line','arc','arc','dot'][ri(0,3)];
+    decoyShapes.push({type,x:lerp(.1,.9,Math.random()),y:lerp(.1,.9,Math.random()),
+      len:lerp(.08,.3,Math.random()),ang:Math.random()*Math.PI*2,
+      sweep:lerp(Math.PI*.2,Math.PI*.42,Math.random()),w:lerp(.06,.1,Math.random())});
   }
 }
+function drawDecoys(){
+  if(!decoyShapes.length){decoysEl.style.display='none';return}
+  const S=512,c=document.createElement('canvas');c.width=c.height=S;
+  const g=c.getContext('2d');
+  g.strokeStyle=g.fillStyle='#000';g.lineCap='round';
+  decoyShapes.forEach(s=>{
+    g.lineWidth=s.w*S;
+    const x=s.x*S,y=s.y*S,l=s.len*S;
+    g.beginPath();
+    if(s.type==='line'){g.moveTo(x,y);g.lineTo(x+Math.cos(s.ang)*l,y+Math.sin(s.ang)*l);g.stroke()}
+    else if(s.type==='arc'){g.arc(x,y,l*1.1,s.ang,s.ang+s.sweep);g.stroke()}
+    else{g.arc(x,y,s.w*S*.6,0,Math.PI*2);g.fill()}
+  });
+  const url=`url("${c.toDataURL()}")`;
+  decoysEl.style.webkitMaskImage=url;
+  decoysEl.style.maskImage=url;
+  decoysEl.style.display='block';
+}
+
+/* ---------- motion ---------- */
+function frame(now){
+  const t=(now-t0)/1000,dt=Math.min(.1,(now-lastT)/1000);lastT=now;
+  const W=stage.clientWidth,dl=driftLevel();
+  const A=dl>0?(0.01+0.13*dl)*W:0,sp=0.3+1.1*dl;
+  const x=A*Math.sin(t*sp+ph[0]),y=A*Math.sin(t*sp*0.77+ph[1]);
+  const target=spin?(revealed?(rotAngle>180?360:0):rotAngle):0;
+  curRot+=(target-curRot)*Math.min(1,dt*3.5);
+  const tf=`translate(${x}px,${y}px) rotate(${curRot}deg)`;
+  letterEl.style.transform=tf;letters.forEach(l=>l.style.transform=tf);
+  if(decoyShapes.length){
+    const dx=A*Math.sin(t*sp*0.9+ph[2]),dy=A*Math.sin(t*sp*0.65+ph[3]);
+    decoysEl.style.transform=`translate(${dx}px,${dy}px)`;
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ---------- game flow ---------- */
 function newRound(){
-  revealed=false;
+  round++;
+  revealed=false;stage.classList.remove('revealed');
   revealBtn.innerHTML='&#x1F4A1;';
-  letterEl.textContent=POOL[Math.floor(Math.random()*POOL.length)];
+  const ch=POOL[Math.floor(Math.random()*POOL.length)];
+  letterEl.textContent=ch;letters.forEach(l=>l.textContent=ch);
+  ph=[0,0,0,0].map(()=>Math.random()*Math.PI*2);
+  rotAngle=ri(25,335);curRot=spin?rotAngle:0;t0=performance.now();
+  genDecoys();
   applyStyle();
   fitLetter();
   fillShade();
 }
 revealBtn.addEventListener('click',()=>{
   if(!revealed){
-    revealed=true;
+    revealed=true;stage.classList.add('revealed');
     fillShade();
     revealBtn.innerHTML='&#x1F520;';
     const u=new SpeechSynthesisUtterance(letterEl.textContent);
+    u.lang='en-US';
+    const vs=speechSynthesis.getVoices();
+    const v=vs.find(v=>v.lang==='en-US'&&v.localService)||vs.find(v=>v.lang==='en-US')||vs.find(v=>v.lang.replace('_','-')==='en-US');
+    if(v)u.voice=v;
     speechSynthesis.cancel();speechSynthesis.speak(u);
   } else newRound();
 });
+function refreshToggles(){
+  challengeBtn.classList.toggle('on',tv);
+  dizzyBtn.classList.toggle('on',spin);
+}
 challengeBtn.addEventListener('click',()=>{
-  challenge=!challenge;
-  challengeBtn.classList.toggle('on',challenge);
-  applyStyle();
+  tv=!tv;refreshToggles();
+  genDecoys();applyStyle();
+});
+dizzyBtn.addEventListener('click',()=>{
+  spin=!spin;refreshToggles();
 });
 window.addEventListener('resize',()=>{resizeCanvas();fitLetter()});
+speechSynthesis.getVoices();
+speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices();
 resizeCanvas();newRound();
+requestAnimationFrame(frame);
 </script>
 </body>
 </html>
