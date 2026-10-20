@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Flashlight Revealer</title>
 <style>
-  html,body{height:100%;margin:0;overflow:hidden;font-family:"UDDigiKyoWriting",system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#222;color:#fff}
+  @font-face{font-family:"LocalFont";src:url("./font.otf") format("opentype");font-weight:100 900;font-display:block}
+  html,body{height:100%;margin:0;overflow:hidden;font-family:"LocalFont","UDDigiKyoWriting",system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#222;color:#fff}
   .wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
   .stage{height:min(92vh,92vw);width:min(92vh,92vw);position:relative;background:#fff;border-radius:8px;overflow:hidden;touch-action:none}
   .content{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
